@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  name      String
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  visits    Visit[]
+}
+
+model Visit {
+  id            String             @id @default(uuid())
+  visitDate     DateTime
+  doctorName    String
+  hospital      String
+  reason        String
+  notes         String             @default("")
+  userId        String
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  prescriptions PrescriptionFile[]
+  reports       ReportFile[]
+
+  @@index([userId])
+  @@index([visitDate])
+}
+
+model PrescriptionFile {
+  id           String   @id @default(uuid())
+  originalName String
+  storageKey   String
+  fileType     String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
+  visitId      String
+  visit        Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([visitId])
+}
+
+model ReportFile {
+  id           String   @id @default(uuid())
+  originalName String
+  storageKey   String
+  fileType     String
+  fileSize     Int
+  uploadedAt   DateTime @default(now())
+  visitId      String
+  visit        Visit    @relation(fields: [visitId], references: [id], onDelete: Cascade)
+
+  @@index([visitId])
+}
