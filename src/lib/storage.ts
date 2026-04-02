@@ -1,30 +1,25 @@
 import {
-  BlobServiceClient,
-  ContainerClient,
-  StorageSharedKeyCredential,
-  generateBlobSASQueryParameters,
-  BlobSASPermissions,
-  SASProtocol,
-} from '@azure/storage-blob';
+  S3Client,
+  PutObjectCommand,
+  DeleteObjectCommand,
+  GetObjectCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { v4 as uuid } from 'uuid';
 import path from 'path';
 
-// ── Azure Blob client ────────────────────────────────────────
+// ── R2 client (S3-compatible) ────────────────────────────────
 
-const accountName = process.env.AZURE_STORAGE_ACCOUNT_NAME!;
-const accountKey = process.env.AZURE_STORAGE_ACCOUNT_KEY!;
-const containerName = process.env.AZURE_STORAGE_CONTAINER || 'medtrack-uploads';
+const s3 = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT!,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY!,
+  },
+});
 
-const sharedKeyCredential = new StorageSharedKeyCredential(accountName, accountKey);
-
-const blobServiceClient = new BlobServiceClient(
-  `https://${accountName}.blob.core.windows.net`,
-  sharedKeyCredential
-);
-
-function getContainer(): ContainerClient {
-  return blobServiceClient.getContainerClient(containerName);
-}
+const BUCKET = process.env.R2_BUCKET_NAME!;
 
 // ── Allowed file types ───────────────────────────────────────
 
@@ -96,56 +91,40 @@ export async function uploadFile(
   const fileId = uuid();
   const storageKey = `${category}s/${visitId}/${fileId}${ext}`;
 
-  // 5. Upload to Azure Blob
-  const container = getContainer();
-  const blockBlob = container.getBlockBlobClient(storageKey);
-
-  await blockBlob.uploadData(buffer, {
-    blobHTTPHeaders: {
-      blobContentType: file.type,
-      blobContentDisposition: `inline; filename="${file.name.replace(/"/g, '_')}"`,
-    },
-    metadata: {
-      originalName: file.name,
-      visitId,
-      category,
-    },
-  });
+  // 5. Upload to R2
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: BUCKET,
+      Key: storageKey,
+      Body: buffer,
+      ContentType: file.type,
+      ContentDisposition: `inline; filename="${file.name.replace(/"/g, '_')}"`,
+    })
+  );
 
   return { storageKey, fileSize: file.size };
 }
 
-// ── Presigned (SAS) URL for viewing ──────────────────────────
+// ── Presigned URL for viewing (1 hour expiry) ────────────────
 
 export async function getPresignedViewUrl(
   storageKey: string,
-  expiresInMinutes = 60
+  expiresIn = 3600
 ): Promise<string> {
-  const container = getContainer();
-  const blockBlob = container.getBlockBlobClient(storageKey);
-
-  const startsOn = new Date();
-  const expiresOn = new Date(startsOn.getTime() + expiresInMinutes * 60 * 1000);
-
-  const sasToken = generateBlobSASQueryParameters(
-    {
-      containerName,
-      blobName: storageKey,
-      permissions: BlobSASPermissions.parse('r'), // read-only
-      startsOn,
-      expiresOn,
-      protocol: SASProtocol.Https,
-    },
-    sharedKeyCredential
-  ).toString();
-
-  return `${blockBlob.url}?${sasToken}`;
+  const command = new GetObjectCommand({
+    Bucket: BUCKET,
+    Key: storageKey,
+  });
+  return getSignedUrl(s3, command, { expiresIn });
 }
 
 // ── Delete ───────────────────────────────────────────────────
 
 export async function deleteStorageFile(storageKey: string): Promise<void> {
-  const container = getContainer();
-  const blockBlob = container.getBlockBlobClient(storageKey);
-  await blockBlob.deleteIfExists({ deleteSnapshots: 'include' });
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: BUCKET,
+      Key: storageKey,
+    })
+  );
 }
