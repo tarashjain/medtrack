@@ -13,10 +13,13 @@ async function enrichFiles<T extends { storageKey: string }>(files: T[]) {
   );
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+type RouteContext = { params: Promise<{ id: string }> }
+
+export async function GET(_req: NextRequest, context: RouteContext) {
   try {
+    const { id } = await context.params;
     const user = await requireAuth();
-    const visit = await getVisitWithFiles(params.id);
+    const visit = await getVisitWithFiles(id);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
@@ -45,10 +48,11 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, context: RouteContext) {
   try {
+    const { id } = await context.params;
     const user = await requireAuth();
-    const visit = await getVisitById(params.id);
+    const visit = await getVisitById(id);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
@@ -57,17 +61,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const body = await req.json();
 
     // updateVisit internally sanitizes to only allowed fields
-    const updated = await updateVisit(params.id, body);
+    const updated = await updateVisit(id, body);
     return NextResponse.json({ visit: updated });
   } catch {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, context: RouteContext) {
   try {
+    const { id } = await context.params;
     const user = await requireAuth();
-    const visit = await getVisitWithFiles(params.id);
+    const visit = await getVisitWithFiles(id);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
@@ -81,7 +86,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     await Promise.allSettled(allKeys.map((key) => deleteStorageFile(key)));
 
     // Cascade delete in DB
-    await deleteVisit(params.id);
+    await deleteVisit(id);
 
     return NextResponse.json({ ok: true });
   } catch {

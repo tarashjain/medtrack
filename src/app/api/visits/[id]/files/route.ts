@@ -3,10 +3,13 @@ import { requireAuth } from '@/lib/auth';
 import { getVisitById, createPrescription, createReport } from '@/lib/db';
 import { uploadFile } from '@/lib/storage';
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+type RouteContext = { params: Promise<{ id: string }> }
+
+export async function POST(req: NextRequest, context: RouteContext) {
   try {
+    const { id } = await context.params;
     const user = await requireAuth();
-    const visit = await getVisitById(params.id);
+    const visit = await getVisitById(id);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
@@ -28,7 +31,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const { storageKey, fileSize } = await uploadFile(
       file,
       category as 'prescription' | 'report',
-      params.id
+      id
     );
 
     // Save metadata to database
@@ -37,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       storageKey,
       fileType: file.type,
       fileSize,
-      visitId: params.id,
+      visitId: id,
     };
 
     const record =
