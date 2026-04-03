@@ -3,20 +3,23 @@ import { requireAuth } from '@/lib/auth';
 import { getVisitById, findAnyFileById, deleteAnyFile } from '@/lib/db';
 import { deleteStorageFile } from '@/lib/storage';
 
+type RouteContext = { params: Promise<{ id: string; fileId: string }> }
+
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string; fileId: string } }
+  context: RouteContext
 ) {
   try {
+    const { id, fileId } = await context.params;
     const user = await requireAuth();
-    const visit = await getVisitById(params.id);
+    const visit = await getVisitById(id);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
     }
 
-    const file = await findAnyFileById(params.fileId);
-    if (!file || file.visitId !== params.id) {
+    const file = await findAnyFileById(fileId);
+    if (!file || file.visitId !== id) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });
     }
 
@@ -28,7 +31,7 @@ export async function DELETE(
     }
 
     // Delete DB record
-    await deleteAnyFile(params.fileId);
+    await deleteAnyFile(fileId);
 
     return NextResponse.json({ ok: true });
   } catch {
