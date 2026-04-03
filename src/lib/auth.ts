@@ -25,7 +25,7 @@ const SESSION_OPTIONS = {
 // ── Session helpers ──────────────────────────────────────────
 
 export async function getSession(): Promise<IronSession<SessionData>> {
-  const cookieStore = cookies();
+  const cookieStore = await cookies();
   return getIronSession<SessionData>(cookieStore, SESSION_OPTIONS);
 }
 
