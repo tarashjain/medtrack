@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { getVisitsByUserId, createVisit } from '@/lib/db';
+import { createVisit } from '@/lib/db';
 import { TAGS } from '@/lib/tags';
 
 export async function GET() {
   try {
     const user = await requireAuth();
-    const visits = await getVisitsByUserId(user.id);
+    const { prisma } = await import('@/lib/prisma');
+    const visits = await prisma.visit.findMany({
+      where: { userId: user.id },
+      orderBy: { visitDate: 'desc' },
+      include: {
+        _count: { select: { prescriptions: true, reports: true } },
+        member: { select: { name: true } },
+      },
+    });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const enriched = visits.map((v: any) => ({
@@ -17,6 +25,10 @@ export async function GET() {
       reason: v.reason,
       notes: v.notes,
       tags: v.tags || [],
+      followUpDate: v.followUpDate ? v.followUpDate.toISOString() : null,
+      followUpNote: v.followUpNote || '',
+      memberId: v.memberId || null,
+      memberName: v.member?.name || null,
       prescriptionCount: v._count.prescriptions,
       reportCount: v._count.reports,
     }));
@@ -32,7 +44,7 @@ export async function POST(req: NextRequest) {
     const user = await requireAuth();
     const body = await req.json();
 
-    const { visitDate, doctorName, hospital, reason, notes, tags } = body;
+    const { visitDate, doctorName, hospital, reason, notes, tags, followUpDate, followUpNote, memberId } = body;
 
     if (!visitDate || !doctorName?.trim() || !hospital?.trim() || !reason?.trim()) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
@@ -50,6 +62,9 @@ export async function POST(req: NextRequest) {
       reason: reason.trim(),
       notes: (notes || '').trim(),
       tags: validTags,
+      followUpDate: followUpDate ? new Date(followUpDate) : null,
+      followUpNote: (followUpNote || '').trim(),
+      memberId: memberId || null,
       userId: user.id,
     });
 

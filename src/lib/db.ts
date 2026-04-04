@@ -53,6 +53,9 @@ export async function createVisit(data: {
   reason: string;
   notes: string;
   tags?: string[];
+  followUpDate?: Date | null;
+  followUpNote?: string;
+  memberId?: string | null;
   userId: string;
 }) {
   return prisma.visit.create({ data });
@@ -65,6 +68,9 @@ const ALLOWED_VISIT_FIELDS = new Set([
   'reason',
   'notes',
   'tags',
+  'followUpDate',
+  'followUpNote',
+  'memberId',
 ]);
 
 export async function updateVisit(
@@ -160,4 +166,26 @@ export async function deleteAnyFile(fileId: string) {
   } catch {
     return false;
   }
+}
+
+// ── Family member operations ──────────────────────────────────
+
+export async function getFamilyMembers(userId: string) {
+  return prisma.familyMember.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'asc' },
+  });
+}
+
+export async function createFamilyMember(data: {
+  name: string;
+  relationship: string;
+  dateOfBirth?: Date | null;
+  userId: string;
+}) {
+  return prisma.familyMember.create({ data });
+}
+
+export async function deleteFamilyMember(id: string) {
+  return prisma.familyMember.delete({ where: { id } });
 }

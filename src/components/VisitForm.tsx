@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useCallback, FormEvent } from 'react';
+import { useState, useRef, useCallback, FormEvent, useEffect } from 'react';
 import TagSelector from '@/components/TagSelector';
 import { useRouter } from 'next/navigation';
 
@@ -12,6 +12,12 @@ type ParsedFields = {
   notes: string;
   tags: string[];
 };
+
+interface FamilyMember {
+  id: string;
+  name: string;
+  relationship: string;
+}
 
 type CameraMode = 'idle' | 'camera' | 'preview';
 
@@ -45,8 +51,16 @@ export default function VisitForm() {
     notes: '',
     tags: [],
   });
+  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
+  const [memberId, setMemberId] = useState('');
+  const [followUpDate, setFollowUpDate] = useState('');
+  const [followUpNote, setFollowUpNote] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    fetch('/api/family').then(r => r.json()).then(d => setFamilyMembers(d.members || [])).catch(() => {});
+  }, []);
 
   const update = (field: string, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -174,7 +188,7 @@ export default function VisitForm() {
       const res = await fetch('/api/visits', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, memberId: memberId || null, followUpDate: followUpDate || null, followUpNote }),
       });
       if (!res.ok) { const d = await res.json(); throw new Error(d.error || 'Failed to create visit'); }
       const { visit } = await res.json();
@@ -325,6 +339,18 @@ export default function VisitForm() {
             </div>
           )}
 
+          {familyMembers.length > 0 && (
+            <div>
+              <label className={labelClass}>For family member <span className="text-slate-400 font-normal">(optional)</span></label>
+              <select value={memberId} onChange={e => setMemberId(e.target.value)} className={inputClass}>
+                <option value="">Myself</option>
+                {familyMembers.map(m => (
+                  <option key={m.id} value={m.id}>{m.name} ({m.relationship})</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="grid gap-5 sm:grid-cols-2">
             <div>
               <label className={labelClass}>Visit Date <span className="text-red-400">*</span></label>
@@ -359,6 +385,17 @@ export default function VisitForm() {
               )}
             </label>
             <TagSelector selected={form.tags} onChange={(tags) => setForm(prev => ({ ...prev, tags }))} />
+          </div>
+
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div>
+              <label className={labelClass}>Follow-up date <span className="text-slate-400 font-normal">(optional)</span></label>
+              <input type="date" value={followUpDate} onChange={e => setFollowUpDate(e.target.value)} className={inputClass} />
+            </div>
+            <div>
+              <label className={labelClass}>Follow-up note</label>
+              <input type="text" value={followUpNote} onChange={e => setFollowUpNote(e.target.value)} placeholder="Review results, second opinion…" className={inputClass} />
+            </div>
           </div>
         </div>
       </div>
