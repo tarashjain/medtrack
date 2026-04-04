@@ -3,7 +3,7 @@ import { getIronSession } from 'iron-session';
 import type { SessionData } from '@/lib/auth';
 
 // Routes that don't require authentication
-const PUBLIC_PATHS = new Set(['/login', '/api/auth/login']);
+const PUBLIC_PATHS = new Set(['/login', '/api/auth/login', '/api/auth/signup']);
 
 // Static file prefixes to skip
 const STATIC_PREFIXES = ['/_next', '/favicon.ico'];

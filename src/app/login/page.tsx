@@ -5,23 +5,26 @@ import { useRouter } from 'next/navigation';
 
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const resetForm = () => { setName(''); setEmail(''); setPassword(''); setError(''); };
+  const switchMode = (m: 'login' | 'signup') => { setMode(m); resetForm(); };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!email || !password) { setError('Please enter your email and password.'); return; }
+    if (!email || !password || (mode === 'signup' && !name)) { setError('Please fill in all fields.'); return; }
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      if (!res.ok) { const data = await res.json(); throw new Error(data.error || 'Login failed'); }
+      const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/signup';
+      const body = mode === 'login' ? { email, password } : { name, email, password };
+      const res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!res.ok) { const data = await res.json(); throw new Error(data.error || (mode === 'login' ? 'Login failed' : 'Signup failed')); }
       router.push('/dashboard');
       router.refresh();
     } catch (err: unknown) {
@@ -63,10 +66,22 @@ export default function LoginPage() {
             </div>
             <span className="font-display text-xl text-brand-900">MedTrack</span>
           </div>
-          <div className="mb-8">
-            <h2 className="font-display text-2xl text-slate-800 mb-2">Welcome back</h2>
-            <p className="text-sm text-slate-400">Sign in to access your medical records</p>
+
+          {/* Mode toggle */}
+          <div className="flex rounded-xl bg-slate-100 p-1 mb-8">
+            <button type="button" onClick={() => switchMode('login')} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${mode === 'login' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+              Sign In
+            </button>
+            <button type="button" onClick={() => switchMode('signup')} className={`flex-1 py-2 text-sm font-medium rounded-lg transition-all ${mode === 'signup' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+              Create Account
+            </button>
           </div>
+
+          <div className="mb-8">
+            <h2 className="font-display text-2xl text-slate-800 mb-2">{mode === 'login' ? 'Welcome back' : 'Create your account'}</h2>
+            <p className="text-sm text-slate-400">{mode === 'login' ? 'Sign in to access your medical records' : 'Start tracking your medical visits for free'}</p>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-red-50 border border-red-100 animate-fade-in">
@@ -74,23 +89,32 @@ export default function LoginPage() {
                 <p className="text-sm text-red-600">{error}</p>
               </div>
             )}
+            {mode === 'signup' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-600 mb-1.5">Full name</label>
+                <input type="text" value={name} onChange={(e) => { setName(e.target.value); setError(''); }} placeholder="Jane Smith" autoComplete="name" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all" />
+              </div>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-600 mb-1.5">Email</label>
-              <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setError(''); }} placeholder="patient@medtrack.com" autoComplete="email" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all" />
+              <input type="email" value={email} onChange={(e) => { setEmail(e.target.value); setError(''); }} placeholder="you@example.com" autoComplete="email" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all" />
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-600 mb-1.5">Password</label>
-              <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} placeholder="••••••••" autoComplete="current-password" className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all" />
+              <input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setError(''); }} placeholder={mode === 'signup' ? 'At least 8 characters' : '••••••••'} autoComplete={mode === 'login' ? 'current-password' : 'new-password'} className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all" />
             </div>
             <button type="submit" disabled={loading} className="w-full px-4 py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-all disabled:opacity-50 flex items-center justify-center gap-2 mt-2">
               {loading && <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
-              {loading ? 'Signing in…' : 'Sign In'}
+              {loading ? (mode === 'login' ? 'Signing in…' : 'Creating account…') : (mode === 'login' ? 'Sign In' : 'Create Account')}
             </button>
           </form>
-          <div className="mt-8 p-4 rounded-xl bg-slate-50 border border-slate-100">
-            <p className="text-xs font-medium text-slate-500 mb-1">Demo credentials</p>
-            <p className="text-xs text-slate-400 font-mono">patient@medtrack.com / password123</p>
-          </div>
+
+          <p className="mt-6 text-center text-sm text-slate-400">
+            {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+            <button type="button" onClick={() => switchMode(mode === 'login' ? 'signup' : 'login')} className="text-brand-600 font-medium hover:text-brand-700 transition-colors">
+              {mode === 'login' ? 'Create one' : 'Sign in'}
+            </button>
+          </p>
         </div>
       </div>
     </div>
