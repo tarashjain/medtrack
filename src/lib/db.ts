@@ -52,6 +52,7 @@ export async function createVisit(data: {
   hospital: string;
   reason: string;
   notes: string;
+  tags?: string[];
   userId: string;
 }) {
   return prisma.visit.create({ data });
@@ -63,6 +64,7 @@ const ALLOWED_VISIT_FIELDS = new Set([
   'hospital',
   'reason',
   'notes',
+  'tags',
 ]);
 
 export async function updateVisit(

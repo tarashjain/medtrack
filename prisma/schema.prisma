@@ -24,6 +24,7 @@ model Visit {
   hospital      String
   reason        String
   notes         String             @default("")
+  tags          String[]           @default([])
   userId        String
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt

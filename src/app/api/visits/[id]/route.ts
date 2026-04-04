@@ -37,6 +37,7 @@ export async function GET(_req: NextRequest, context: RouteContext) {
         hospital: visit.hospital,
         reason: visit.reason,
         notes: visit.notes,
+        tags: visit.tags || [],
         createdAt: visit.createdAt.toISOString(),
         updatedAt: visit.updatedAt.toISOString(),
       },

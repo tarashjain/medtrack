@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useCallback, FormEvent } from 'react';
+import TagSelector from '@/components/TagSelector';
 import { useRouter } from 'next/navigation';
 
 type ParsedFields = {
@@ -9,6 +10,7 @@ type ParsedFields = {
   visitDate: string;
   reason: string;
   notes: string;
+  tags: string[];
 };
 
 type CameraMode = 'idle' | 'camera' | 'preview';
@@ -41,6 +43,7 @@ export default function VisitForm() {
     hospital: '',
     reason: '',
     notes: '',
+    tags: [],
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -86,6 +89,7 @@ export default function VisitForm() {
         hospital: data.hospital || prev.hospital,
         reason: data.reason || prev.reason,
         notes: data.notes || prev.notes,
+        tags: data.tags?.length ? data.tags : prev.tags,
       }));
       setParsed(true);
     } catch (err: unknown) {
@@ -345,6 +349,16 @@ export default function VisitForm() {
           <div>
             <label className={labelClass}>Notes</label>
             <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Medications, dosage, instructions, follow-up…" rows={4} className={`${inputClass} resize-none`} />
+          </div>
+
+          <div>
+            <label className={labelClass}>
+              Tags
+              {parsed && form.tags.length > 0 && (
+                <span className="ml-2 text-xs font-normal text-brand-600">✓ AI suggested {form.tags.length} tag{form.tags.length > 1 ? 's' : ''}</span>
+              )}
+            </label>
+            <TagSelector selected={form.tags} onChange={(tags) => setForm(prev => ({ ...prev, tags }))} />
           </div>
         </div>
       </div>

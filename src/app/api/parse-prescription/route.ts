@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
+import { TAGS } from '@/lib/tags';
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,7 +16,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
     }
 
-    // Convert file to base64
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const mimeType = file.type || 'image/jpeg';
@@ -28,9 +28,10 @@ Extract these fields:
 - visitDate: Date of the visit in YYYY-MM-DD format. Use today's date if not clearly visible.
 - reason: Main reason for visit or primary diagnosis (keep it short, under 10 words). Empty string if not found.
 - notes: Key medical notes — medications prescribed, dosage, instructions, follow-up advice. Empty string if not found.
+- tags: Array of applicable tags from this exact list only: ${TAGS.join(', ')}. Choose all that apply based on the medical specialty, doctor type, or content of the document. Return as a JSON array of strings.
 
 Return exactly this JSON shape:
-{"doctorName":"","hospital":"","visitDate":"","reason":"","notes":""}`;
+{"doctorName":"","hospital":"","visitDate":"","reason":"","notes":"","tags":[]}`;
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
@@ -53,10 +54,7 @@ Return exactly this JSON shape:
 
     if (!response.ok) {
       console.error('Gemini API error:', response.status, responseText);
-      return NextResponse.json(
-        { error: `Gemini API error: ${response.status}`, detail: responseText },
-        { status: 502 }
-      );
+      return NextResponse.json({ error: `Gemini API error: ${response.status}`, detail: responseText }, { status: 502 });
     }
 
     const result = JSON.parse(responseText);
@@ -67,12 +65,17 @@ Return exactly this JSON shape:
       return NextResponse.json({ error: 'AI returned empty response' }, { status: 502 });
     }
 
-    // Strip any markdown fences just in case
     const clean = text.replace(/```json|```/g, '').trim();
 
     let parsed;
     try {
       parsed = JSON.parse(clean);
+      // Validate tags are from the allowed list
+      if (Array.isArray(parsed.tags)) {
+        parsed.tags = parsed.tags.filter((t: string) => TAGS.includes(t as typeof TAGS[number]));
+      } else {
+        parsed.tags = [];
+      }
     } catch {
       console.error('Failed to parse Gemini JSON:', clean);
       return NextResponse.json({ error: 'AI response was not valid JSON', raw: clean }, { status: 502 });
@@ -81,9 +84,6 @@ Return exactly this JSON shape:
     return NextResponse.json({ parsed });
   } catch (err) {
     console.error('Parse prescription unexpected error:', err);
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : 'Unexpected error' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: err instanceof Error ? err.message : 'Unexpected error' }, { status: 500 });
   }
 }

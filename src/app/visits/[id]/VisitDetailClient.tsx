@@ -3,6 +3,8 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import FileUpload from '@/components/FileUpload';
+import TagSelector from '@/components/TagSelector';
+import { TagBadges } from '@/components/TagSelector';
 import FileList from '@/components/FileList';
 import { DetailSkeleton } from '@/components/ui/Skeletons';
 import { ToastProvider, useToast } from '@/components/ui/Toast';
@@ -14,6 +16,7 @@ interface Visit {
   hospital: string;
   reason: string;
   notes: string;
+  tags: string[];
 }
 
 interface MedFile {
@@ -39,11 +42,12 @@ function EditVisitForm({
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
-    visitDate: visit.visitDate.slice(0, 10), // YYYY-MM-DD
+    visitDate: visit.visitDate.slice(0, 10),
     doctorName: visit.doctorName,
     hospital: visit.hospital,
     reason: visit.reason,
     notes: visit.notes,
+    tags: visit.tags || [],
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
@@ -78,6 +82,7 @@ function EditVisitForm({
           hospital: form.hospital.trim(),
           reason: form.reason.trim(),
           notes: form.notes,
+          tags: form.tags,
         }),
       });
       if (!res.ok) {
@@ -154,6 +159,11 @@ function EditVisitForm({
           onChange={(e) => update('notes', e.target.value)}
           className={`${fieldClass('notes')} resize-none`}
         />
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Tags</label>
+        <TagSelector selected={form.tags} onChange={(tags) => setForm(prev => ({ ...prev, tags }))} />
       </div>
 
       <div className="flex items-center gap-3 pt-1">
@@ -321,6 +331,12 @@ function VisitDetailInner({ visitId }: { visitId: string }) {
               <div className="pt-4 border-t border-slate-50">
                 <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Notes</p>
                 <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{visit.notes}</p>
+              </div>
+            )}
+            {visit.tags && visit.tags.length > 0 && (
+              <div className="pt-4 border-t border-slate-50">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Tags</p>
+                <TagBadges tags={visit.tags} />
               </div>
             )}
           </>

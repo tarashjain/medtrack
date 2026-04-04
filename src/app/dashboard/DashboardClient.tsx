@@ -5,6 +5,7 @@ import Link from 'next/link';
 import VisitCard from '@/components/VisitCard';
 import { DashboardSkeleton } from '@/components/ui/Skeletons';
 import { ToastProvider } from '@/components/ui/Toast';
+import { TAGS, TAG_COLORS } from '@/lib/tags';
 
 interface Visit {
   id: string;
@@ -13,6 +14,7 @@ interface Visit {
   hospital: string;
   reason: string;
   notes: string;
+  tags: string[];
   prescriptionCount: number;
   reportCount: number;
 }
@@ -21,6 +23,7 @@ export default function DashboardClient() {
   const [visits, setVisits] = useState<Visit[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [activeTag, setActiveTag] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/visits')
@@ -30,18 +33,32 @@ export default function DashboardClient() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Only show tags that are actually used
+  const usedTags = useMemo(() => {
+    const used = new Set<string>();
+    visits.forEach(v => v.tags?.forEach(t => used.add(t)));
+    return TAGS.filter(t => used.has(t));
+  }, [visits]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return visits;
-    const q = search.toLowerCase();
-    return visits.filter(
-      (v) =>
-        v.doctorName.toLowerCase().includes(q) ||
-        v.hospital.toLowerCase().includes(q) ||
-        v.reason.toLowerCase().includes(q) ||
-        v.notes.toLowerCase().includes(q) ||
-        new Date(v.visitDate).toLocaleDateString().includes(q)
-    );
-  }, [visits, search]);
+    let result = visits;
+    if (activeTag) {
+      result = result.filter(v => v.tags?.includes(activeTag));
+    }
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (v) =>
+          v.doctorName.toLowerCase().includes(q) ||
+          v.hospital.toLowerCase().includes(q) ||
+          v.reason.toLowerCase().includes(q) ||
+          v.notes.toLowerCase().includes(q) ||
+          v.tags?.some(t => t.toLowerCase().includes(q)) ||
+          new Date(v.visitDate).toLocaleDateString().includes(q)
+      );
+    }
+    return result;
+  }, [visits, search, activeTag]);
 
   return (
     <ToastProvider>
@@ -65,37 +82,69 @@ export default function DashboardClient() {
           </Link>
         </div>
 
-        {/* Search */}
         {visits.length > 0 && (
-          <div className="relative mb-6">
-            <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by doctor, hospital, reason, or date…"
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-            />
-            {search && (
-              <button
-                onClick={() => setSearch('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200"
-              >
-                <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
+          <>
+            {/* Search */}
+            <div className="relative mb-3">
+              <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search by doctor, hospital, reason, tag…"
+                className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200"
+                >
+                  <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            {/* Tag filter pills */}
+            {usedTags.length > 0 && (
+              <div className="flex flex-wrap gap-2 mb-6">
+                <button
+                  onClick={() => setActiveTag(null)}
+                  className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                    activeTag === null
+                      ? 'bg-slate-800 text-white border-slate-800'
+                      : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                  }`}
+                >
+                  All
+                </button>
+                {usedTags.map(tag => {
+                  const colors = TAG_COLORS[tag] || 'bg-slate-50 text-slate-600 border-slate-200';
+                  const isActive = activeTag === tag;
+                  return (
+                    <button
+                      key={tag}
+                      onClick={() => setActiveTag(isActive ? null : tag)}
+                      className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                        isActive ? `${colors} ring-1 ring-offset-1 ring-current` : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600'
+                      }`}
+                    >
+                      {tag}
+                    </button>
+                  );
+                })}
+              </div>
             )}
-          </div>
+          </>
         )}
 
         {/* Content */}
         {loading ? (
           <DashboardSkeleton />
         ) : visits.length === 0 ? (
-          /* Empty state */
           <div className="text-center py-20 animate-fade-in">
             <div className="w-20 h-20 rounded-2xl bg-brand-50 flex items-center justify-center mx-auto mb-6">
               <svg className="w-10 h-10 text-brand-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
@@ -124,7 +173,12 @@ export default function DashboardClient() {
               </svg>
             </div>
             <h2 className="font-display text-lg text-slate-600 mb-1">No matching visits</h2>
-            <p className="text-sm text-slate-400">Try adjusting your search terms</p>
+            <p className="text-sm text-slate-400">Try adjusting your search or tag filter</p>
+            {activeTag && (
+              <button onClick={() => setActiveTag(null)} className="mt-3 text-sm text-brand-600 hover:text-brand-700 font-medium">
+                Clear tag filter
+              </button>
+            )}
           </div>
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
