@@ -14,7 +14,7 @@ interface Visit {
   hospital: string;
   reason: string;
   notes: string;
-  tags: string[];
+  tags?: string[];
   prescriptionCount: number;
   reportCount: number;
 }
