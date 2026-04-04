@@ -1,100 +1,75 @@
+// src/app/api/visits/[id]/files/route.ts
+
+export const runtime = 'nodejs';
+
 import { NextRequest, NextResponse } from 'next/server';
 import { requireAuth } from '@/lib/auth';
-import { getVisitById, getVisitWithFiles, updateVisit, deleteVisit } from '@/lib/db';
-import { getPresignedViewUrl, deleteStorageFile } from '@/lib/storage';
+import { getVisitById, createPrescription, createReport } from '@/lib/db';
+import { uploadFile } from '@/lib/storage';
 
-// Helper: enrich file records with presigned view URLs
-async function enrichFiles<T extends { storageKey: string }>(files: T[]) {
-  return Promise.all(
-    files.map(async (f) => ({
-      ...f,
-      viewUrl: await getPresignedViewUrl(f.storageKey),
-    }))
-  );
-}
+type RouteContext = {
+  params: { id: string };
+};
 
-type RouteContext = { params: Promise<{ id: string }> }
-
-export async function GET(_req: NextRequest, context: RouteContext) {
+export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
-    const { id } = await context.params;
+    const visitId = params.id;
+
     const user = await requireAuth();
-    const visit = await getVisitWithFiles(id);
+    const visit = await getVisitById(visitId);
 
     if (!visit || visit.userId !== user.id) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
     }
 
-    // Add presigned URLs so frontend can view/download files
-    const prescriptions = await enrichFiles(visit.prescriptions);
-    const reports = await enrichFiles(visit.reports);
+    const formData = await req.formData();
+    const file = formData.get('file') as File | null;
+    const category = formData.get('category') as string | null;
 
-    return NextResponse.json({
-      visit: {
-        id: visit.id,
-        visitDate: visit.visitDate.toISOString(),
-        doctorName: visit.doctorName,
-        hospital: visit.hospital,
-        reason: visit.reason,
-        notes: visit.notes,
-        tags: visit.tags || [],
-        followUpDate: visit.followUpDate ? visit.followUpDate.toISOString() : null,
-        followUpNote: visit.followUpNote || '',
-        memberId: visit.memberId || null,
-        memberName: (visit as any).member?.name || null,
-        createdAt: visit.createdAt.toISOString(),
-        updatedAt: visit.updatedAt.toISOString(),
-      },
-      prescriptions,
-      reports,
-    });
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-}
-
-export async function PATCH(req: NextRequest, context: RouteContext) {
-  try {
-    const { id } = await context.params;
-    const user = await requireAuth();
-    const visit = await getVisitById(id);
-
-    if (!visit || visit.userId !== user.id) {
-      return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
     }
 
-    const body = await req.json();
-
-    // updateVisit internally sanitizes to only allowed fields
-    const updated = await updateVisit(id, body);
-    return NextResponse.json({ visit: updated });
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
-}
-
-export async function DELETE(_req: NextRequest, context: RouteContext) {
-  try {
-    const { id } = await context.params;
-    const user = await requireAuth();
-    const visit = await getVisitWithFiles(id);
-
-    if (!visit || visit.userId !== user.id) {
-      return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
+    if (!category || !['prescription', 'report'].includes(category)) {
+      return NextResponse.json(
+        { error: 'Invalid category. Must be "prescription" or "report".' },
+        { status: 400 }
+      );
     }
 
-    // Delete all files from S3 before removing DB records
-    const allKeys = [
-      ...visit.prescriptions.map((f: { storageKey: string }) => f.storageKey),
-      ...visit.reports.map((f: { storageKey: string }) => f.storageKey),
-    ];
-    await Promise.allSettled(allKeys.map((key) => deleteStorageFile(key)));
+    // Upload to S3 (validates MIME, size, magic bytes)
+    const { storageKey, fileSize } = await uploadFile(
+      file,
+      category as 'prescription' | 'report',
+      visitId
+    );
 
-    // Cascade delete in DB
-    await deleteVisit(id);
+    const payload = {
+      originalName: file.name,
+      storageKey,
+      fileType: file.type,
+      fileSize,
+      visitId,
+    };
 
-    return NextResponse.json({ ok: true });
-  } catch {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    const record =
+      category === 'prescription'
+        ? await createPrescription(payload)
+        : await createReport(payload);
+
+    return NextResponse.json({ file: record }, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Upload failed';
+
+    if (
+      message.includes('not allowed') ||
+      message.includes('does not match') ||
+      message.includes('10MB')
+    ) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+
+    console.error('File upload error:', err);
+    return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
   }
 }
