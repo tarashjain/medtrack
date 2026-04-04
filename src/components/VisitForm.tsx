@@ -75,7 +75,11 @@ export default function VisitForm() {
       fd.append('file', file);
       const res = await fetch('/api/parse-prescription', { method: 'POST', body: fd });
       if (!res.ok) throw new Error('Parsing failed');
-      const { parsed: data } = await res.json() as { parsed: ParsedFields };
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || 'Parsing failed');
+      }
+      const { parsed: data } = json as { parsed: ParsedFields };
       setForm(prev => ({
         visitDate: data.visitDate || prev.visitDate,
         doctorName: data.doctorName || prev.doctorName,
@@ -84,8 +88,9 @@ export default function VisitForm() {
         notes: data.notes || prev.notes,
       }));
       setParsed(true);
-    } catch {
-      setParseError('Could not extract details from the image. You can fill them in manually.');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      setParseError(`Could not extract details (${msg}). Fill in the fields manually.`);
     } finally {
       setParsing(false);
     }

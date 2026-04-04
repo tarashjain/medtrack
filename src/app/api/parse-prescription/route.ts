@@ -9,13 +9,16 @@ export async function POST(req: NextRequest) {
     const file = formData.get('file') as File | null;
     if (!file) return NextResponse.json({ error: 'No file provided' }, { status: 400 });
 
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      console.error('GEMINI_API_KEY is not set');
+      return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
+    }
+
     // Convert file to base64
     const arrayBuffer = await file.arrayBuffer();
     const base64 = Buffer.from(arrayBuffer).toString('base64');
     const mimeType = file.type || 'image/jpeg';
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
 
     const prompt = `You are a medical document parser. Analyze this prescription or medical document image and extract the following information. Return ONLY a valid JSON object with no markdown, no explanation, no backticks.
 
@@ -30,7 +33,7 @@ Return exactly this JSON shape:
 {"doctorName":"","hospital":"","visitDate":"","reason":"","notes":""}`;
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -46,22 +49,41 @@ Return exactly this JSON shape:
       }
     );
 
+    const responseText = await response.text();
+
     if (!response.ok) {
-      const err = await response.text();
-      console.error('Gemini error:', err);
-      return NextResponse.json({ error: 'AI parsing failed' }, { status: 502 });
+      console.error('Gemini API error:', response.status, responseText);
+      return NextResponse.json(
+        { error: `Gemini API error: ${response.status}`, detail: responseText },
+        { status: 502 }
+      );
     }
 
-    const result = await response.json();
+    const result = JSON.parse(responseText);
     const text = result.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+    if (!text) {
+      console.error('Gemini returned empty response:', JSON.stringify(result));
+      return NextResponse.json({ error: 'AI returned empty response' }, { status: 502 });
+    }
 
     // Strip any markdown fences just in case
     const clean = text.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+
+    let parsed;
+    try {
+      parsed = JSON.parse(clean);
+    } catch {
+      console.error('Failed to parse Gemini JSON:', clean);
+      return NextResponse.json({ error: 'AI response was not valid JSON', raw: clean }, { status: 502 });
+    }
 
     return NextResponse.json({ parsed });
   } catch (err) {
-    console.error('Parse prescription error:', err);
-    return NextResponse.json({ error: 'Failed to parse prescription' }, { status: 500 });
+    console.error('Parse prescription unexpected error:', err);
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : 'Unexpected error' },
+      { status: 500 }
+    );
   }
 }
