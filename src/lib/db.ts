@@ -42,6 +42,7 @@ export async function getVisitWithFiles(id: string) {
     include: {
       prescriptions: { orderBy: { uploadedAt: 'desc' } },
       reports: { orderBy: { uploadedAt: 'desc' } },
+      member: { select: { name: true } },
     },
   });
 }

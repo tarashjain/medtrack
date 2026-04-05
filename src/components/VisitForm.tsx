@@ -373,7 +373,17 @@ export default function VisitForm() {
           </div>
 
           <div>
-            <label className={labelClass}>Notes</label>
+            <div className="flex items-center gap-2 mb-1.5">
+              <label className="block text-sm font-medium text-slate-600">Notes</label>
+              {parsed && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-full font-medium">
+                  <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                  </svg>
+                  AI generated — please verify
+                </span>
+              )}
+            </div>
             <textarea value={form.notes} onChange={(e) => update('notes', e.target.value)} placeholder="Medications, dosage, instructions, follow-up…" rows={4} className={`${inputClass} resize-none`} />
           </div>
 

@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import VisitCard from '@/components/VisitCard';
-import { DashboardSkeleton } from '@/components/ui/Skeletons';
+import FileUpload from '@/components/FileUpload';
+import TagSelector from '@/components/TagSelector';
+import { TagBadges } from '@/components/TagSelector';
+import FileList from '@/components/FileList';
+import { DetailSkeleton } from '@/components/ui/Skeletons';
 import { ToastProvider, useToast } from '@/components/ui/Toast';
-import { TAGS, TAG_COLORS } from '@/lib/tags';
 
 interface Visit {
   id: string;
@@ -15,370 +16,473 @@ interface Visit {
   hospital: string;
   reason: string;
   notes: string;
-  tags?: string[];
+  tags: string[];
   followUpDate: string | null;
   followUpNote: string;
-  memberId: string | null;
   memberName: string | null;
-  prescriptionCount: number;
-  reportCount: number;
 }
 
-interface FamilyMember {
+interface MedFile {
   id: string;
-  name: string;
-  relationship: string;
+  originalName: string;
+  storageKey: string;
+  viewUrl: string;
+  fileType: string;
+  fileSize: number;
+  uploadedAt: string;
 }
 
-function DashboardInner() {
+// ── Edit form sub-component ──────────────────────────────────
+function EditVisitForm({
+  visit,
+  onSaved,
+  onCancel,
+}: {
+  visit: Visit;
+  onSaved: (v: Visit) => void;
+  onCancel: () => void;
+}) {
   const { toast } = useToast();
-  const searchParams = useSearchParams();
-  const memberFilter = searchParams.get('member');
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState({
+    visitDate: visit.visitDate.slice(0, 10),
+    doctorName: visit.doctorName,
+    hospital: visit.hospital,
+    reason: visit.reason,
+    notes: visit.notes,
+    tags: visit.tags || [],
+    followUpDate: visit.followUpDate ? visit.followUpDate.slice(0, 10) : '',
+    followUpNote: visit.followUpNote || '',
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
 
-  const [visits, setVisits] = useState<Visit[]>([]);
-  const [familyMembers, setFamilyMembers] = useState<FamilyMember[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
-  const [activeTag, setActiveTag] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [bulkMode, setBulkMode] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [exporting, setExporting] = useState(false);
-
-  const fetchAll = () => {
-    Promise.all([
-      fetch('/api/visits').then(r => r.json()),
-      fetch('/api/family').then(r => r.json()),
-    ]).then(([vData, fData]) => {
-      setVisits(vData.visits || []);
-      setFamilyMembers(fData.members || []);
-    }).catch(() => {}).finally(() => setLoading(false));
+  const update = (field: string, value: string) => {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    if (errors[field]) setErrors((prev) => ({ ...prev, [field]: '' }));
   };
 
-  useEffect(() => { fetchAll(); }, []);
-
-  // Upcoming follow-ups (next 30 days)
-  const upcomingFollowUps = useMemo(() => {
-    const now = new Date();
-    const in30 = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
-    return visits.filter(v => {
-      if (!v.followUpDate) return false;
-      const d = new Date(v.followUpDate);
-      return d >= now && d <= in30;
-    }).sort((a, b) => new Date(a.followUpDate!).getTime() - new Date(b.followUpDate!).getTime());
-  }, [visits]);
-
-  // Overdue follow-ups
-  const overdueFollowUps = useMemo(() => {
-    const now = new Date();
-    return visits.filter(v => v.followUpDate && new Date(v.followUpDate) < now);
-  }, [visits]);
-
-  const usedTags = useMemo(() => {
-    const used = new Set<string>();
-    visits.forEach(v => v.tags?.forEach(t => used.add(t)));
-    return TAGS.filter(t => used.has(t));
-  }, [visits]);
-
-  const filtered = useMemo(() => {
-    let result = visits;
-    if (memberFilter === 'me') result = result.filter(v => !v.memberId);
-    else if (memberFilter) result = result.filter(v => v.memberId === memberFilter);
-    if (activeTag) result = result.filter(v => v.tags?.includes(activeTag));
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      result = result.filter(v =>
-        v.doctorName.toLowerCase().includes(q) ||
-        v.hospital.toLowerCase().includes(q) ||
-        v.reason.toLowerCase().includes(q) ||
-        v.notes.toLowerCase().includes(q) ||
-        v.tags?.some(t => t.toLowerCase().includes(q)) ||
-        v.memberName?.toLowerCase().includes(q) ||
-        new Date(v.visitDate).toLocaleDateString().includes(q)
-      );
-    }
-    return result;
-  }, [visits, search, activeTag, memberFilter]);
-
-  const toggleSelect = (id: string) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
+  const validate = () => {
+    const errs: Record<string, string> = {};
+    if (!form.visitDate) errs.visitDate = 'Visit date is required';
+    if (!form.doctorName.trim()) errs.doctorName = 'Doctor name is required';
+    if (!form.hospital.trim()) errs.hospital = 'Hospital / clinic is required';
+    if (!form.reason.trim()) errs.reason = 'Reason is required';
+    return errs;
   };
 
-  const selectAll = () => setSelected(new Set(filtered.map(v => v.id)));
-  const clearSelect = () => { setSelected(new Set()); setBulkMode(false); };
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const errs = validate();
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
 
-  const handleBulkDelete = async () => {
-    if (!confirm(`Delete ${selected.size} visit${selected.size > 1 ? 's' : ''}? This cannot be undone.`)) return;
-    setDeleting(true);
+    setSaving(true);
     try {
-      const res = await fetch('/api/visits/bulk-delete', {
-        method: 'POST',
+      const res = await fetch(`/api/visits/${visit.id}`, {
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ids: [...selected] }),
+        body: JSON.stringify({
+          visitDate: new Date(form.visitDate).toISOString(),
+          doctorName: form.doctorName.trim(),
+          hospital: form.hospital.trim(),
+          reason: form.reason.trim(),
+          notes: form.notes,
+          tags: form.tags,
+          followUpDate: form.followUpDate || null,
+          followUpNote: form.followUpNote,
+        }),
       });
-      if (!res.ok) throw new Error('Delete failed');
-      const { deleted } = await res.json();
-      toast(`Deleted ${deleted} visit${deleted > 1 ? 's' : ''}`, 'success');
-      clearSelect();
-      fetchAll();
-    } catch {
-      toast('Failed to delete visits', 'error');
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  const handleExport = async (visitId?: string) => {
-    setExporting(true);
-    try {
-      // If specific visitId → single export via GET
-      // If in bulk mode with selection → POST selected IDs
-      // Otherwise → POST all visits
-      let res: Response;
-      if (visitId) {
-        res = await fetch(`/api/visits/export?visitId=${visitId}`, { credentials: 'same-origin' });
-      } else {
-        const ids = selected.size > 0 ? [...selected] : [];
-        res = await fetch('/api/visits/export', {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ids }),
-        });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || 'Update failed');
       }
-      if (!res.ok) { toast('Export failed', 'error'); return; }
-      const html = await res.text();
-      const blob = new Blob([html], { type: 'text/html' });
-      const blobUrl = URL.createObjectURL(blob);
-      const win = window.open(blobUrl, '_blank');
-      if (!win) toast('Allow pop-ups to export PDF', 'error');
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
-    } catch {
-      toast('Export failed', 'error');
+      const { visit: updated } = await res.json();
+      toast('Visit updated successfully', 'success');
+      onSaved(updated);
+    } catch (err: unknown) {
+      toast(err instanceof Error ? err.message : 'Failed to save changes', 'error');
     } finally {
-      setExporting(false);
+      setSaving(false);
     }
   };
 
-  const activeMember = memberFilter ? familyMembers.find(m => m.id === memberFilter) : null;
-  const myVisitsActive = memberFilter === 'me';
+  const fieldClass = (field: string) =>
+    `w-full px-4 py-2.5 rounded-xl border text-sm transition-colors bg-white
+     ${errors[field] ? 'border-red-300 focus:border-red-400' : 'border-slate-200 focus:border-brand-400'}`;
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-6xl">
-      {/* Follow-up banners */}
-      {overdueFollowUps.length > 0 && (
-        <div className="mb-4 p-4 rounded-xl bg-red-50 border border-red-100 flex items-start gap-3">
-          <svg className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
-          </svg>
-          <div>
-            <p className="text-sm font-semibold text-red-700">Overdue follow-up{overdueFollowUps.length > 1 ? 's' : ''}</p>
-            <p className="text-xs text-red-600 mt-0.5">
-              {overdueFollowUps.slice(0, 2).map(v => `${v.reason} (${new Date(v.followUpDate!).toLocaleDateString()})`).join(' · ')}
-              {overdueFollowUps.length > 2 && ` +${overdueFollowUps.length - 2} more`}
-            </p>
-          </div>
-        </div>
-      )}
-      {upcomingFollowUps.length > 0 && (
-        <div className="mb-4 p-4 rounded-xl bg-amber-50 border border-amber-100 flex items-start gap-3">
-          <svg className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
-          </svg>
-          <div>
-            <p className="text-sm font-semibold text-amber-700">Upcoming follow-up{upcomingFollowUps.length > 1 ? 's' : ''}</p>
-            <p className="text-xs text-amber-600 mt-0.5">
-              {upcomingFollowUps.slice(0, 2).map(v => `${v.reason} on ${new Date(v.followUpDate!).toLocaleDateString()}`).join(' · ')}
-              {upcomingFollowUps.length > 2 && ` +${upcomingFollowUps.length - 2} more`}
-            </p>
-          </div>
-        </div>
-      )}
+    <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Visit Date *</label>
+        <input
+          type="date"
+          value={form.visitDate}
+          onChange={(e) => update('visitDate', e.target.value)}
+          className={fieldClass('visitDate')}
+          max={new Date().toISOString().split('T')[0]}
+        />
+        {errors.visitDate && <p className="text-xs text-red-500 mt-1">{errors.visitDate}</p>}
+      </div>
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <div className="grid gap-4 sm:grid-cols-2">
         <div>
-          <h1 className="font-display text-2xl lg:text-3xl text-slate-800">
-            {activeMember ? `${activeMember.name}'s Visits` : myVisitsActive ? 'My Visits' : 'Medical Visits'}
-          </h1>
-          <p className="text-sm text-slate-400 mt-1">
-            {visits.length} {visits.length === 1 ? 'visit' : 'visits'} on record
-            {activeMember && <Link href="/dashboard" className="ml-2 text-brand-600 hover:text-brand-700">· View all</Link>}
-          </p>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Doctor *</label>
+          <input
+            type="text"
+            value={form.doctorName}
+            onChange={(e) => update('doctorName', e.target.value)}
+            className={fieldClass('doctorName')}
+          />
+          {errors.doctorName && <p className="text-xs text-red-500 mt-1">{errors.doctorName}</p>}
         </div>
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            onClick={() => handleExport()}
-            disabled={exporting}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 ${bulkMode && selected.size > 0 ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-slate-200 text-slate-600'}`}
-          >
-            {exporting ? (
-              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-              </svg>
-            )}
-            {bulkMode && selected.size > 0 ? `Export (${selected.size})` : 'Export PDF'}
-          </button>
-          <button
-            onClick={() => { setBulkMode(!bulkMode); setSelected(new Set()); }}
-            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium transition-colors ${bulkMode ? 'border-brand-300 bg-brand-50 text-brand-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
-            </svg>
-            {bulkMode ? 'Cancel' : 'Select'}
-          </button>
-          <Link
-            href="/visits/new"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-colors"
-          >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-            New Visit
-          </Link>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Hospital / Clinic *</label>
+          <input
+            type="text"
+            value={form.hospital}
+            onChange={(e) => update('hospital', e.target.value)}
+            className={fieldClass('hospital')}
+          />
+          {errors.hospital && <p className="text-xs text-red-500 mt-1">{errors.hospital}</p>}
         </div>
       </div>
 
-      {/* Bulk action bar */}
-      {bulkMode && (
-        <div className="flex items-center gap-3 mb-4 p-3 bg-white rounded-xl border border-slate-200">
-          <span className="text-sm text-slate-600 font-medium">{selected.size} selected</span>
-          <button onClick={selectAll} className="text-xs text-brand-600 hover:text-brand-700 font-medium">Select all ({filtered.length})</button>
-          <button onClick={clearSelect} className="text-xs text-slate-400 hover:text-slate-600">Clear</button>
-          <div className="ml-auto flex items-center gap-2">
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Reason for Visit *</label>
+        <input
+          type="text"
+          value={form.reason}
+          onChange={(e) => update('reason', e.target.value)}
+          className={fieldClass('reason')}
+        />
+        {errors.reason && <p className="text-xs text-red-500 mt-1">{errors.reason}</p>}
+      </div>
+
+      <div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider">Notes</label>
+          <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-full font-medium">
+            <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+            </svg>
+            AI generated — please verify
+          </span>
+        </div>
+        <textarea
+          rows={4}
+          value={form.notes}
+          onChange={(e) => update('notes', e.target.value)}
+          className={`${fieldClass('notes')} resize-none`}
+        />
+      </div>
+
+      <div>
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Tags</label>
+        <TagSelector selected={form.tags} onChange={(tags) => setForm(prev => ({ ...prev, tags }))} />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Follow-up date</label>
+          <input type="date" value={form.followUpDate} onChange={e => setForm(prev => ({ ...prev, followUpDate: e.target.value }))} className={fieldClass('followUpDate')} />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Follow-up note</label>
+          <input type="text" value={form.followUpNote} onChange={e => setForm(prev => ({ ...prev, followUpNote: e.target.value }))} placeholder="Review results, second opinion…" className={fieldClass('followUpNote')} />
+        </div>
+      </div>
+
+      <div className="flex items-center gap-3 pt-1">
+        <button
+          type="submit"
+          disabled={saving}
+          className="px-5 py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+        >
+          {saving ? (
+            <>
+              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              Saving…
+            </>
+          ) : (
+            <>
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+              </svg>
+              Save Changes
+            </>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="px-5 py-2.5 rounded-xl border border-slate-200 text-sm font-medium text-slate-500 hover:bg-slate-50 transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ── Main inner component ─────────────────────────────────────
+function VisitDetailInner({ visitId }: { visitId: string }) {
+  const { toast } = useToast();
+  const [visit, setVisit] = useState<Visit | null>(null);
+  const [prescriptions, setPrescriptions] = useState<MedFile[]>([]);
+  const [reports, setReports] = useState<MedFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false);
+  const [editing, setEditing] = useState(false);
+
+  const fetchVisit = async () => {
+    try {
+      const res = await fetch(`/api/visits/${visitId}`);
+      if (!res.ok) { setNotFound(true); return; }
+      const data = await res.json();
+      setVisit(data.visit);
+      setPrescriptions(data.prescriptions || []);
+      setReports(data.reports || []);
+    } catch {
+      setNotFound(true);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchVisit(); }, [visitId]);
+
+  if (loading) {
+    return (
+      <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-4xl">
+        <DetailSkeleton />
+      </div>
+    );
+  }
+
+  if (notFound || !visit) {
+    return (
+      <div className="px-4 sm:px-6 lg:px-8 py-20 text-center">
+        <div className="w-16 h-16 rounded-2xl bg-slate-50 flex items-center justify-center mx-auto mb-4">
+          <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+          </svg>
+        </div>
+        <h2 className="font-display text-xl text-slate-600 mb-2">Visit not found</h2>
+        <Link href="/dashboard" className="text-sm text-brand-600 hover:text-brand-700 font-medium">← Back to Dashboard</Link>
+      </div>
+    );
+  }
+
+  const date = new Date(visit.visitDate);
+  const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-4xl animate-fade-in">
+      {/* Breadcrumb */}
+      <div className="flex items-center gap-2 text-sm text-slate-400 mb-6">
+        <Link href="/dashboard" className="hover:text-brand-600 transition-colors">Dashboard</Link>
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+        </svg>
+        <span className="text-slate-600 font-medium truncate max-w-[200px]">{visit.reason}</span>
+      </div>
+
+      {/* Visit info card */}
+      <div className="bg-white rounded-2xl border border-slate-100 p-6 mb-6">
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <h1 className="font-display text-xl lg:text-2xl text-slate-800 mb-1">{visit.reason}</h1>
+            <p className="text-sm text-slate-400">{formattedDate}</p>
+          </div>
+          {/* Edit / Editable badge */}
+          {editing ? (
+            <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-600">
+              <svg className="w-3 h-3 mr-1.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+              </svg>
+              Editing
+            </span>
+          ) : (
             <button
-              onClick={handleBulkDelete}
-              disabled={selected.size === 0 || deleting}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors disabled:opacity-40"
+              onClick={() => setEditing(true)}
+              className="inline-flex items-center px-3 py-1.5 rounded-xl text-xs font-semibold bg-brand-50 text-brand-600 hover:bg-brand-100 transition-colors"
             >
-              {deleting ? <div className="w-3.5 h-3.5 border-2 border-red-300 border-t-red-600 rounded-full animate-spin" /> : (
-                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
-                </svg>
-              )}
-              Delete {selected.size > 0 ? `(${selected.size})` : ''}
+              <svg className="w-3 h-3 mr-1.5" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0 1 15.75 21H5.25A2.25 2.25 0 0 1 3 18.75V8.25A2.25 2.25 0 0 1 5.25 6H10" />
+              </svg>
+              Edit Visit
             </button>
-          </div>
-        </div>
-      )}
-
-      {visits.length > 0 && (
-        <>
-          {/* Family member filter */}
-          {familyMembers.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-3">
-              <Link href="/dashboard" className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${!memberFilter ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                Everyone
-              </Link>
-              <Link href="/dashboard?member=me" className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${myVisitsActive ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                My Visits
-              </Link>
-              {familyMembers.map(m => (
-                <Link key={m.id} href={`/dashboard?member=${m.id}`} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${memberFilter === m.id ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                  {m.name}
-                </Link>
-              ))}
-            </div>
           )}
-
-          {/* Search */}
-          <div className="relative mb-3">
-            <svg className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-            <input
-              type="text"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by doctor, hospital, reason, tag…"
-              className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-200 bg-white text-sm text-slate-700 placeholder:text-slate-350 transition-all focus:border-brand-400 focus:ring-2 focus:ring-brand-100"
-            />
-            {search && (
-              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 w-5 h-5 rounded-full bg-slate-100 flex items-center justify-center hover:bg-slate-200">
-                <svg className="w-3 h-3 text-slate-500" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
-                </svg>
-              </button>
-            )}
-          </div>
-
-          {/* Tag filter */}
-          {usedTags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mb-6">
-              <button onClick={() => setActiveTag(null)} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${activeTag === null ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
-                All
-              </button>
-              {usedTags.map(tag => {
-                const colors = TAG_COLORS[tag] || 'bg-slate-50 text-slate-600 border-slate-200';
-                return (
-                  <button key={tag} onClick={() => setActiveTag(activeTag === tag ? null : tag)} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${activeTag === tag ? `${colors} ring-1 ring-offset-1 ring-current` : 'bg-white text-slate-400 border-slate-200 hover:border-slate-300 hover:text-slate-600'}`}>
-                    {tag}
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Content */}
-      {loading ? (
-        <DashboardSkeleton />
-      ) : visits.length === 0 ? (
-        <div className="text-center py-20 animate-fade-in">
-          <div className="w-20 h-20 rounded-2xl bg-brand-50 flex items-center justify-center mx-auto mb-6">
-            <svg className="w-10 h-10 text-brand-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M11.35 3.836c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15c1.012 0 1.867.668 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m8.9-4.414c.376.023.75.05 1.124.08 1.131.094 1.976 1.057 1.976 2.192V16.5A2.25 2.25 0 0 1 18 18.75h-2.25m-7.5-10.5H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V18.75m-7.5-10.5h6.375c.621 0 1.125.504 1.125 1.125v9.375m-8.25-3 1.5 1.5 3-3.75" />
-            </svg>
-          </div>
-          <h2 className="font-display text-xl text-slate-700 mb-2">No visits yet</h2>
-          <p className="text-sm text-slate-400 mb-6 max-w-xs mx-auto">Start tracking your medical history by recording your first visit.</p>
-          <Link href="/visits/new" className="inline-flex items-center gap-2 px-6 py-2.5 rounded-xl bg-brand-600 text-white text-sm font-semibold hover:bg-brand-700 transition-colors">
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>
-            Create Your First Visit
-          </Link>
         </div>
-      ) : filtered.length === 0 ? (
-        <div className="text-center py-16 animate-fade-in">
-          <div className="w-16 h-16 rounded-2xl bg-slate-50 flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-slate-300" fill="none" viewBox="0 0 24 24" strokeWidth={1} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-            </svg>
-          </div>
-          <h2 className="font-display text-lg text-slate-600 mb-1">No matching visits</h2>
-          <p className="text-sm text-slate-400">Try adjusting your search or filters</p>
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((visit) => (
-            <div key={visit.id} className={`stagger-item relative ${bulkMode ? 'cursor-pointer' : ''}`} onClick={bulkMode ? () => toggleSelect(visit.id) : undefined}>
-              {bulkMode && (
-                <div className={`absolute top-3 right-3 z-10 w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${selected.has(visit.id) ? 'bg-brand-600 border-brand-600' : 'bg-white border-slate-300'}`}>
-                  {selected.has(visit.id) && <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" /></svg>}
+
+        {editing ? (
+          /* ── Inline edit form ── */
+          <EditVisitForm
+            visit={visit}
+            onSaved={(updated) => {
+              setVisit(updated);
+              setEditing(false);
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          /* ── Read-only view ── */
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-brand-50 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-brand-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                  </svg>
                 </div>
-              )}
-              <div className={bulkMode ? 'pointer-events-none' : ''}>
-                <VisitCard {...visit} onExport={!bulkMode ? () => handleExport(visit.id) : undefined} />
+                <div>
+                  <p className="text-xs text-slate-400">Doctor</p>
+                  <p className="text-sm font-medium text-slate-700">{visit.doctorName}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-4 h-4 text-blue-500" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3H21m-3.75 3H21" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-xs text-slate-400">Hospital / Clinic</p>
+                  <p className="text-sm font-medium text-slate-700">{visit.hospital}</p>
+                </div>
               </div>
             </div>
-          ))}
+
+            {visit.notes && (
+              <div className="pt-4 border-t border-slate-50">
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wider">Notes</p>
+                  <span className="inline-flex items-center gap-1 text-[10px] text-amber-600 bg-amber-50 border border-amber-100 px-1.5 py-0.5 rounded-full font-medium">
+                    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                    </svg>
+                    AI generated — verify
+                  </span>
+                </div>
+                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">{visit.notes}</p>
+              </div>
+            )}
+            {visit.tags && visit.tags.length > 0 && (
+              <div className="pt-4 border-t border-slate-50">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Tags</p>
+                <TagBadges tags={visit.tags} />
+              </div>
+            )}
+            <div className="pt-4 border-t border-slate-50">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Follow-up</p>
+                {visit.followUpDate ? (
+                  <div className={`flex items-start gap-2.5 p-3 rounded-lg ${new Date(visit.followUpDate) < new Date() ? 'bg-red-50 border border-red-100' : 'bg-amber-50 border border-amber-100'}`}>
+                    <svg className={`w-4 h-4 flex-shrink-0 mt-0.5 ${new Date(visit.followUpDate) < new Date() ? 'text-red-500' : 'text-amber-500'}`} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
+                    </svg>
+                    <div>
+                      <p className={`text-sm font-semibold ${new Date(visit.followUpDate) < new Date() ? 'text-red-700' : 'text-amber-700'}`}>
+                        {new Date(visit.followUpDate).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                        {new Date(visit.followUpDate) < new Date() && <span className="ml-2 text-xs font-medium">Overdue</span>}
+                      </p>
+                      {visit.followUpNote && <p className="text-xs text-slate-500 mt-0.5">{visit.followUpNote}</p>}
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setEditing(true)}
+                    className="text-sm text-slate-400 hover:text-brand-600 transition-colors flex items-center gap-1.5"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Add follow-up date
+                  </button>
+                )}
+              </div>
+            {visit.memberName && (
+              <div className="pt-4 border-t border-slate-50">
+                <p className="text-xs font-medium text-slate-400 uppercase tracking-wider mb-2">Family member</p>
+                <p className="text-sm font-medium text-slate-700">{visit.memberName}</p>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* File sections */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Prescriptions */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-4 sm:p-6">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center flex-shrink-0">
+              <svg className="w-4 h-4 text-amber-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m2.25 0H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="font-display text-base text-slate-800">Prescriptions</h2>
+              <p className="text-xs text-slate-400">{prescriptions.length} file{prescriptions.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          <FileUpload
+            visitId={visitId}
+            category="prescription"
+            onUploaded={fetchVisit}
+            onError={(msg) => toast(msg, 'error')}
+            onSuccess={(msg) => toast(msg, 'success')}
+          />
+          <div className="mt-3">
+            <FileList
+              files={prescriptions}
+              visitId={visitId}
+              onDeleted={fetchVisit}
+              onError={(msg) => toast(msg, 'error')}
+              onSuccess={(msg) => toast(msg, 'success')}
+            />
+          </div>
         </div>
-      )}
+
+        {/* Reports */}
+        <div className="bg-white rounded-2xl border border-slate-100 p-4 sm:p-6">
+          <div className="flex items-center gap-2.5 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+              <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.664 0 .414.336.75.75.75h4.5a.75.75 0 0 0 .75-.75 2.25 2.25 0 0 0-.1-.664m-5.8 0A2.251 2.251 0 0 1 13.5 2.25H15a2.25 2.25 0 0 1 2.15 1.586m-5.8 0c-.376.023-.75.05-1.124.08C9.095 4.01 8.25 4.973 8.25 6.108V8.25m0 0H4.875c-.621 0-1.125.504-1.125 1.125v11.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125V9.375c0-.621-.504-1.125-1.125-1.125H8.25Z" />
+              </svg>
+            </div>
+            <div>
+              <h2 className="font-display text-base text-slate-800">Medical Reports</h2>
+              <p className="text-xs text-slate-400">{reports.length} file{reports.length !== 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          <FileUpload
+            visitId={visitId}
+            category="report"
+            onUploaded={fetchVisit}
+            onError={(msg) => toast(msg, 'error')}
+            onSuccess={(msg) => toast(msg, 'success')}
+          />
+          <div className="mt-3">
+            <FileList
+              files={reports}
+              visitId={visitId}
+              onDeleted={fetchVisit}
+              onError={(msg) => toast(msg, 'error')}
+              onSuccess={(msg) => toast(msg, 'success')}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
 
-export default function DashboardClient() {
+// ── Wrapper with toast provider ──────────────────────────────
+export default function VisitDetailClient({ visitId }: { visitId: string }) {
   return (
     <ToastProvider>
-      <DashboardInner />
+      <VisitDetailInner visitId={visitId} />
     </ToastProvider>
   );
 }
