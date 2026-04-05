@@ -135,15 +135,28 @@ function DashboardInner() {
   const handleExport = async (visitId?: string) => {
     setExporting(true);
     try {
-      const url = visitId ? `/api/visits/export?visitId=${visitId}` : '/api/visits/export';
-      const res = await fetch(url, { credentials: 'same-origin' });
+      // If specific visitId → single export via GET
+      // If in bulk mode with selection → POST selected IDs
+      // Otherwise → POST all visits
+      let res: Response;
+      if (visitId) {
+        res = await fetch(`/api/visits/export?visitId=${visitId}`, { credentials: 'same-origin' });
+      } else {
+        const ids = selected.size > 0 ? [...selected] : [];
+        res = await fetch('/api/visits/export', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }),
+        });
+      }
       if (!res.ok) { toast('Export failed', 'error'); return; }
       const html = await res.text();
       const blob = new Blob([html], { type: 'text/html' });
       const blobUrl = URL.createObjectURL(blob);
       const win = window.open(blobUrl, '_blank');
       if (!win) toast('Allow pop-ups to export PDF', 'error');
-      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
     } catch {
       toast('Export failed', 'error');
     } finally {
@@ -201,12 +214,16 @@ function DashboardInner() {
           <button
             onClick={() => handleExport()}
             disabled={exporting}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50"
+            className={`inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border text-sm font-medium hover:bg-slate-50 transition-colors disabled:opacity-50 ${bulkMode && selected.size > 0 ? 'border-brand-300 text-brand-700 bg-brand-50' : 'border-slate-200 text-slate-600'}`}
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
-            </svg>
-            Export PDF
+            {exporting ? (
+              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+            )}
+            {bulkMode && selected.size > 0 ? `Export (${selected.size})` : 'Export PDF'}
           </button>
           <button
             onClick={() => { setBulkMode(!bulkMode); setSelected(new Set()); }}
