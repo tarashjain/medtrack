@@ -82,7 +82,8 @@ function DashboardInner() {
 
   const filtered = useMemo(() => {
     let result = visits;
-    if (memberFilter) result = result.filter(v => v.memberId === memberFilter);
+    if (memberFilter === 'me') result = result.filter(v => !v.memberId);
+    else if (memberFilter) result = result.filter(v => v.memberId === memberFilter);
     if (activeTag) result = result.filter(v => v.tags?.includes(activeTag));
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -133,13 +134,25 @@ function DashboardInner() {
 
   const handleExport = async (visitId?: string) => {
     setExporting(true);
-    const url = visitId ? `/api/visits/export?visitId=${visitId}` : '/api/visits/export';
-    const win = window.open(url, '_blank');
-    if (!win) toast('Allow pop-ups to export PDF', 'error');
-    setExporting(false);
+    try {
+      const url = visitId ? `/api/visits/export?visitId=${visitId}` : '/api/visits/export';
+      const res = await fetch(url, { credentials: 'same-origin' });
+      if (!res.ok) { toast('Export failed', 'error'); return; }
+      const html = await res.text();
+      const blob = new Blob([html], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+      const win = window.open(blobUrl, '_blank');
+      if (!win) toast('Allow pop-ups to export PDF', 'error');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+    } catch {
+      toast('Export failed', 'error');
+    } finally {
+      setExporting(false);
+    }
   };
 
   const activeMember = memberFilter ? familyMembers.find(m => m.id === memberFilter) : null;
+  const myVisitsActive = memberFilter === 'me';
 
   return (
     <div className="px-4 sm:px-6 lg:px-8 py-6 lg:py-8 max-w-6xl">
@@ -177,7 +190,7 @@ function DashboardInner() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="font-display text-2xl lg:text-3xl text-slate-800">
-            {activeMember ? `${activeMember.name}'s Visits` : 'Medical Visits'}
+            {activeMember ? `${activeMember.name}'s Visits` : myVisitsActive ? 'My Visits' : 'Medical Visits'}
           </h1>
           <p className="text-sm text-slate-400 mt-1">
             {visits.length} {visits.length === 1 ? 'visit' : 'visits'} on record
@@ -246,6 +259,9 @@ function DashboardInner() {
             <div className="flex flex-wrap gap-2 mb-3">
               <Link href="/dashboard" className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${!memberFilter ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
                 Everyone
+              </Link>
+              <Link href="/dashboard?member=me" className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${myVisitsActive ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
+                My Visits
               </Link>
               {familyMembers.map(m => (
                 <Link key={m.id} href={`/dashboard?member=${m.id}`} className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium border transition-all ${memberFilter === m.id ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'}`}>
